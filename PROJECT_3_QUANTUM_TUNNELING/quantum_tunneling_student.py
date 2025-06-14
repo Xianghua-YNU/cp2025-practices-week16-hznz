@@ -24,27 +24,24 @@ class QuantumTunnelingSolver:
             barrier_width (int): 势垒宽度，默认3
             barrier_height (float): 势垒高度，默认1.0
         """
-        # TODO: 初始化所有参数
-        # 提示：需要设置空间网格、势垒参数，并初始化波函数和系数矩阵
+        # 初始化参数
         self.Nx = Nx
         self.Nt = Nt
         self.x0 = x0
         self.k0 = k0
         self.d = d
-        self.barrier_width = int(barrier_width)  # 确保是整数
+        self.barrier_width = int(barrier_width)
         self.barrier_height = barrier_height
         
-        # TODO: 创建空间网格
-        self.x = None  # 应该是 np.arange(self.Nx)
+        # 创建空间网格 (0 到 Nx-1)
+        self.x = np.arange(Nx)
         
-        # TODO: 设置势垒
-        self.V = None  # 调用 setup_potential() 方法
+        # 设置势垒
+        self.V = self.setup_potential()
         
-        # TODO: 初始化波函数矩阵和系数矩阵
-        self.C = None  # 复数矩阵，形状为 (Nx, Nt)
-        self.B = None  # 复数矩阵，形状为 (Nx, Nt)
-        
-        raise NotImplementedError(f"请在 {__file__} 中完成 __init__ 方法的实现")
+        # 初始化波函数矩阵和辅助矩阵
+        self.B = np.zeros((Nx, Nt), dtype=complex)  # 波函数矩阵
+        self.C = np.zeros((Nx, Nt), dtype=complex)  # 辅助变量矩阵
 
     def wavefun(self, x):
         """高斯波包函数
@@ -57,13 +54,11 @@ class QuantumTunnelingSolver:
             
         数学公式:
             ψ(x,0) = exp(ik₀x) * exp(-(x-x₀)²ln10(2)/d²)
-            
-        物理意义:
-            描述一个在x₀位置、具有动量k₀、宽度为d的高斯波包
         """
-        # TODO: 实现高斯波包函数
-        # 提示：包含动量项 exp(ik₀x) 和高斯包络 exp(-(x-x₀)²ln10(2)/d²)
-        raise NotImplementedError(f"请在 {__file__} 中实现此方法")
+        # 计算高斯包络
+        gaussian = np.exp(-(x - self.x0)**2 * (2 * np.log(10)) / self.d**2)
+        # 添加动量项
+        return np.exp(1j * self.k0 * x) * gaussian
 
     def setup_potential(self):
         """设置势垒函数
@@ -76,12 +71,16 @@ class QuantumTunnelingSolver:
             势垒位置：从 Nx//2 到 Nx//2+barrier_width
             势垒高度：barrier_height
         """
-        # TODO: 创建势垒数组
-        # 提示：
-        # 1. 初始化全零数组
-        # 2. 在中间位置设置势垒高度
-        # 3. 注意barrier_width必须是整数
-        raise NotImplementedError(f"请在 {__file__} 中实现此方法")
+        V = np.zeros(self.Nx)
+        barrier_start = self.Nx // 2
+        barrier_end = barrier_start + self.barrier_width
+        
+        # 确保势垒不超过边界
+        if barrier_end > self.Nx:
+            barrier_end = self.Nx
+        
+        V[barrier_start:barrier_end] = self.barrier_height
+        return V
 
     def build_coefficient_matrix(self):
         """构建变形的Crank-Nicolson格式的系数矩阵
@@ -96,12 +95,15 @@ class QuantumTunnelingSolver:
         矩阵结构:
             三对角矩阵，主对角线为 -2+2j-V[i]，上下对角线为1
         """
-        # TODO: 构建系数矩阵
-        # 提示：
-        # 1. 使用 np.diag() 创建三对角矩阵
-        # 2. 主对角线：-2+2j-self.V
-        # 3. 上对角线和下对角线：全1数组
-        raise NotImplementedError(f"请在 {__file__} 中实现此方法")
+        # 主对角线元素
+        main_diag = -2 + 2j - self.V
+        
+        # 上下对角线元素（全1）
+        off_diag = np.ones(self.Nx - 1)
+        
+        # 构建三对角矩阵
+        A = np.diag(main_diag) + np.diag(off_diag, k=1) + np.diag(off_diag, k=-1)
+        return A
 
     def solve_schrodinger(self):
         """求解一维含时薛定谔方程
@@ -116,13 +118,28 @@ class QuantumTunnelingSolver:
             时间演化公式：C[:,t+1] = 4j * solve(A, B[:,t])
                          B[:,t+1] = C[:,t+1] - B[:,t]
         """
-        # TODO: 实现薛定谔方程求解
-        # 提示：
-        # 1. 构建系数矩阵A
-        # 2. 设置初始波函数 B[:,0] = wavefun(x)
-        # 3. 对初始波函数进行归一化
-        # 4. 时间循环：使用线性方程组求解进行时间演化
-        raise NotImplementedError(f"请在 {__file__} 中实现此方法")
+        # 构建系数矩阵
+        A = self.build_coefficient_matrix()
+        
+        # 设置初始波函数
+        self.B[:, 0] = self.wavefun(self.x)
+        
+        # 归一化初始波函数
+        norm = np.sqrt(np.sum(np.abs(self.B[:, 0])**2))
+        self.B[:, 0] /= norm
+        
+        # 时间演化循环
+        for t in range(self.Nt - 1):
+            # 计算右侧向量
+            rhs = 4j * self.B[:, t]
+            
+            # 求解线性方程组 A * C[:, t] = rhs
+            self.C[:, t] = np.linalg.solve(A, rhs)
+            
+            # 更新波函数
+            self.B[:, t + 1] = self.C[:, t] - self.B[:, t]
+        
+        return self.x, self.V, self.B, self.C
 
     def calculate_coefficients(self):
         """计算透射和反射系数
@@ -139,13 +156,27 @@ class QuantumTunnelingSolver:
             T = ∫|ψ(x>barrier)|²dx / ∫|ψ(x)|²dx
             R = ∫|ψ(x<barrier)|²dx / ∫|ψ(x)|²dx
         """
-        # TODO: 计算透射和反射系数
-        # 提示：
-        # 1. 确定势垒位置
-        # 2. 计算透射区域的概率（势垒右侧）
-        # 3. 计算反射区域的概率（势垒左侧）
-        # 4. 归一化处理
-        raise NotImplementedError(f"请在 {__file__} 中实现此方法")
+        # 确定势垒位置
+        barrier_start = self.Nx // 2
+        barrier_end = barrier_start + self.barrier_width
+        
+        # 获取最终时刻的波函数
+        psi_final = self.B[:, -1]
+        
+        # 计算总概率
+        total_prob = np.sum(np.abs(psi_final)**2)
+        
+        # 计算反射区域概率 (势垒左侧)
+        reflection_prob = np.sum(np.abs(psi_final[:barrier_start])**2)
+        
+        # 计算透射区域概率 (势垒右侧)
+        transmission_prob = np.sum(np.abs(psi_final[barrier_end:])**2)
+        
+        # 计算系数
+        T = transmission_prob / total_prob
+        R = reflection_prob / total_prob
+        
+        return T, R
 
     def plot_evolution(self, time_indices=None):
         """绘制波函数演化图
@@ -156,14 +187,36 @@ class QuantumTunnelingSolver:
         功能:
             在多个子图中显示不同时刻的波函数概率密度和势垒
         """
-        # TODO: 实现波函数演化绘图
-        # 提示：
-        # 1. 设置默认时间索引
-        # 2. 创建子图布局
-        # 3. 绘制概率密度 |ψ|²
-        # 4. 绘制势垒
-        # 5. 添加标题和标签
-        raise NotImplementedError(f"请在 {__file__} 中实现此方法")
+        if time_indices is None:
+            time_indices = [0, self.Nt//4, self.Nt//2, 3*self.Nt//4, self.Nt-1]
+        
+        num_plots = len(time_indices)
+        fig, axs = plt.subplots(num_plots, 1, figsize=(10, 8))
+        fig.suptitle('量子隧穿效应 - 波函数演化', fontsize=16)
+        
+        # 归一化势垒以便显示
+        V_normalized = self.V / np.max(self.V) * np.max(np.abs(self.B)**2)
+        
+        for i, t_idx in enumerate(time_indices):
+            ax = axs[i] if num_plots > 1 else axs
+            prob_density = np.abs(self.B[:, t_idx])**2
+            
+            # 绘制概率密度
+            ax.plot(self.x, prob_density, 'b-', label=f'|ψ|² (t={t_idx})')
+            
+            # 绘制势垒
+            ax.plot(self.x, V_normalized, 'r-', label='势垒')
+            
+            ax.set_ylabel('概率密度')
+            ax.legend(loc='upper right')
+            
+            # 只在最后一个子图添加x轴标签
+            if i == num_plots - 1 or num_plots == 1:
+                ax.set_xlabel('位置 x')
+        
+        plt.tight_layout()
+        plt.subplots_adjust(top=0.95)
+        plt.show()
 
     def create_animation(self, interval=20):
         """创建波包演化动画
@@ -177,13 +230,39 @@ class QuantumTunnelingSolver:
         功能:
             实时显示波包在势垒附近的演化过程
         """
-        # TODO: 创建动画
-        # 提示：
-        # 1. 设置图形和坐标轴
-        # 2. 创建线条对象
-        # 3. 定义动画更新函数
-        # 4. 使用 FuncAnimation 创建动画
-        raise NotImplementedError(f"请在 {__file__} 中实现此方法")
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        # 归一化势垒以便显示
+        V_normalized = self.V / np.max(self.V) * np.max(np.abs(self.B)**2)
+        
+        # 绘制势垒
+        ax.plot(self.x, V_normalized, 'r-', label='势垒')
+        
+        # 初始化概率密度线
+        line, = ax.plot(self.x, np.abs(self.B[:, 0])**2, 'b-', label='|ψ|²')
+        
+        ax.set_xlim(0, self.Nx)
+        ax.set_ylim(0, np.max(np.abs(self.B)**2) * 1.1)
+        ax.set_xlabel('位置 x')
+        ax.set_ylabel('概率密度')
+        ax.set_title('量子隧穿效应 - 动态演化')
+        ax.legend(loc='upper right')
+        ax.grid(True)
+        
+        # 动画更新函数
+        def update(frame):
+            prob_density = np.abs(self.B[:, frame])**2
+            line.set_ydata(prob_density)
+            ax.set_title(f'量子隧穿效应 - 时间步: {frame}/{self.Nt-1}')
+            return line,
+        
+        # 创建动画
+        ani = animation.FuncAnimation(
+            fig, update, frames=self.Nt, interval=interval, blit=True
+        )
+        
+        plt.close(fig)  # 防止在notebook中显示静态图
+        return ani
 
     def verify_probability_conservation(self):
         """验证概率守恒
@@ -195,12 +274,22 @@ class QuantumTunnelingSolver:
             量子力学中概率必须守恒：∫|ψ(x,t)|²dx = 常数
             数值计算中应该保持在1附近
         """
-        # TODO: 验证概率守恒
-        # 提示：
-        # 1. 计算每个时间步的总概率
-        # 2. 考虑空间步长dx的影响
-        # 3. 返回概率数组用于分析
-        raise NotImplementedError(f"请在 {__file__} 中实现此方法")
+        probabilities = np.zeros(self.Nt)
+        
+        for t in range(self.Nt):
+            probabilities[t] = np.sum(np.abs(self.B[:, t])**2)
+        
+        # 绘制概率守恒图
+        plt.figure(figsize=(10, 5))
+        plt.plot(range(self.Nt), probabilities, 'b-')
+        plt.axhline(1.0, color='r', linestyle='--')
+        plt.xlabel('时间步')
+        plt.ylabel('总概率')
+        plt.title('概率守恒验证')
+        plt.grid(True)
+        plt.show()
+        
+        return probabilities
 
     def demonstrate(self):
         """演示量子隧穿效应
@@ -215,15 +304,29 @@ class QuantumTunnelingSolver:
         返回:
             animation对象
         """
-        # TODO: 实现完整的演示流程
-        # 提示：
-        # 1. 打印开始信息
-        # 2. 调用solve_schrodinger()
-        # 3. 计算并显示系数
-        # 4. 绘制演化图
-        # 5. 验证概率守恒
-        # 6. 创建动画
-        raise NotImplementedError(f"请在 {__file__} 中实现此方法")
+        print("开始求解薛定谔方程...")
+        self.solve_schrodinger()
+        print("求解完成!")
+        
+        # 计算透射和反射系数
+        T, R = self.calculate_coefficients()
+        print(f"透射系数 T = {T:.4f}")
+        print(f"反射系数 R = {R:.4f}")
+        print(f"T + R = {T + R:.4f}")
+        
+        # 绘制演化图
+        print("绘制波函数演化图...")
+        self.plot_evolution()
+        
+        # 验证概率守恒
+        print("验证概率守恒...")
+        self.verify_probability_conservation()
+        
+        # 创建动画
+        print("创建动画...")
+        ani = self.create_animation()
+        
+        return ani
 
 
 def demonstrate_quantum_tunneling():
@@ -234,8 +337,8 @@ def demonstrate_quantum_tunneling():
     返回:
         animation对象
     """
-    # TODO: 创建求解器实例并调用demonstrate方法
-    raise NotImplementedError(f"请在 {__file__} 中实现此函数")
+    solver = QuantumTunnelingSolver()
+    return solver.demonstrate()
 
 
 if __name__ == "__main__":
